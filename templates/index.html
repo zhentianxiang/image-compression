@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>图片压缩工具</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🖼️ 图片压缩工具</h1>
+            <p class="subtitle">拖拽或点击上传图片，快速压缩批量下载</p>
+        </header>
+
+        <!-- Drop Zone -->
+        <div class="drop-zone" id="dropZone">
+            <div class="drop-zone-content">
+                <svg class="drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <p class="drop-text">将图片拖拽到此处，或 <span class="browse-link">点击浏览</span></p>
+                <p class="drop-hint">支持 JPG, PNG, WebP, BMP 格式</p>
+            </div>
+            <input type="file" id="fileInput" multiple accept=".jpg,.jpeg,.png,.webp,.bmp" hidden>
+        </div>
+
+        <!-- Quality Slider -->
+        <div class="quality-control" id="qualityControl" style="display: none;">
+            <label for="qualitySlider">
+                <span>压缩质量</span>
+                <span class="quality-value" id="qualityValue">80%</span>
+            </label>
+            <div class="slider-container">
+                <input type="range" id="qualitySlider" min="10" max="100" value="80">
+                <div class="slider-labels">
+                    <span>小文件</span>
+                    <span>高清晰</span>
+                </div>
+            </div>
+            <button class="btn btn-primary" id="compressBtn">
+                <span class="btn-text">开始压缩</span>
+                <span class="btn-loading" style="display: none;">
+                    <svg class="spinner" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="30 70"/>
+                    </svg>
+                    压缩中...
+                </span>
+            </button>
+        </div>
+
+        <!-- File List -->
+        <div class="file-list" id="fileList"></div>
+
+        <!-- Download Section -->
+        <div class="download-section" id="downloadSection" style="display: none;">
+            <div class="stats" id="stats"></div>
+            <div class="download-actions">
+                <button class="btn btn-success" id="downloadAllBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    下载全部 (ZIP)
+                </button>
+                <button class="btn btn-outline" id="clearAllBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                    清空全部
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State management
+        const state = {
+            files: new Map(),
+            compressing: false
+        };
+
+        // DOM Elements
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const qualityControl = document.getElementById('qualityControl');
+        const qualitySlider = document.getElementById('qualitySlider');
+        const qualityValue = document.getElementById('qualityValue');
+        const compressBtn = document.getElementById('compressBtn');
+        const fileList = document.getElementById('fileList');
+        const downloadSection = document.getElementById('downloadSection');
+        const stats = document.getElementById('stats');
+        const downloadAllBtn = document.getElementById('downloadAllBtn');
+        const clearAllBtn = document.getElementById('clearAllBtn');
+
+        // Utility functions
+        function formatSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        // Drag and drop handlers
+        ['dragenter', 'dragover'].forEach(event => {
+            dropZone.addEventListener(event, (e) => {
+                e.preventDefault();
+                dropZone.classList.add('drag-over');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach(event => {
+            dropZone.addEventListener(event, (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+            });
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            const files = e.dataTransfer.files;
+            handleFiles(files);
+        });
+
+        dropZone.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            handleFiles(e.target.files);
+        });
+
+        // Quality slider
+        qualitySlider.addEventListener('input', (e) => {
+            qualityValue.textContent = e.target.value + '%';
+        });
+
+        // Handle file upload
+        async function handleFiles(files) {
+            if (files.length === 0) return;
+
+            const validFiles = Array.from(files).filter(f => {
+                const ext = f.name.toLowerCase().split('.').pop();
+                return ['jpg', 'jpeg', 'png', 'webp', 'bmp'].includes(ext);
+            });
+
+            if (validFiles.length === 0) {
+                alert('请上传 JPG, PNG, WebP 或 BMP 格式的图片');
+                return;
+            }
+
+            const formData = new FormData();
+            validFiles.forEach(f => formData.append('files', f));
+
+            try {
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    data.files.forEach(fileInfo => {
+                        const originalFile = validFiles.find(f => f.name === fileInfo.filename);
+                        state.files.set(fileInfo.id, {
+                            ...fileInfo,
+                            file: originalFile,
+                            status: 'ready',
+                            compressed_size: null,
+                            ratio: null
+                        });
+                    });
+                    updateUI();
+                }
+            } catch (error) {
+                console.error('Upload error:', error);
+                alert('上传失败，请重试');
+            }
+        }
+
+        // Compress all files
+        compressBtn.addEventListener('click', async () => {
+            if (state.compressing || state.files.size === 0) return;
+
+            state.compressing = true;
+            updateCompressButton(true);
+
+            const fileIds = Array.from(state.files.keys());
+            const quality = parseInt(qualitySlider.value);
+
+            try {
+                const response = await fetch('/api/compress', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ file_ids: fileIds, quality })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    data.files.forEach(result => {
+                        const file = state.files.get(result.id);
+                        if (file) {
+                            file.status = 'completed';
+                            file.compressed_size = result.compressed_size;
+                            file.ratio = result.ratio;
+                        }
+                    });
+                    updateUI();
+                }
+            } catch (error) {
+                console.error('Compress error:', error);
+                alert('压缩失败，请重试');
+            } finally {
+                state.compressing = false;
+                updateCompressButton(false);
+            }
+        });
+
+        // Download single file
+        function downloadFile(fileId) {
+            window.location.href = `/api/download/${fileId}`;
+        }
+
+        // Download all as ZIP
+        downloadAllBtn.addEventListener('click', () => {
+            window.location.href = '/api/download-all';
+        });
+
+        // Clear all
+        clearAllBtn.addEventListener('click', async () => {
+            if (!confirm('确定要清空所有图片吗？')) return;
+
+            try {
+                await fetch('/api/clear', { method: 'POST' });
+                state.files.clear();
+                updateUI();
+            } catch (error) {
+                console.error('Clear error:', error);
+            }
+        });
+
+        // Remove single file
+        function removeFile(fileId) {
+            state.files.delete(fileId);
+            updateUI();
+        }
+
+        // Update UI
+        function updateUI() {
+            // Show/hide quality control
+            qualityControl.style.display = state.files.size > 0 ? 'block' : 'none';
+
+            // Render file list
+            if (state.files.size === 0) {
+                fileList.innerHTML = '';
+                downloadSection.style.display = 'none';
+                return;
+            }
+
+            fileList.innerHTML = '';
+            let totalOriginal = 0;
+            let totalCompressed = 0;
+            let completedCount = 0;
+
+            state.files.forEach((file, fileId) => {
+                totalOriginal += file.original_size;
+                if (file.compressed_size) {
+                    totalCompressed += file.compressed_size;
+                    completedCount++;
+                }
+
+                const fileItem = document.createElement('div');
+                fileItem.className = 'file-item';
+
+                const statusClass = file.status === 'completed' ? 'status-completed' : 'status-pending';
+                const statusText = file.status === 'completed' ? '✓ 已完成' : '等待压缩';
+
+                const ratioDisplay = file.ratio !== null
+                    ? `<span class="ratio ${file.ratio > 0 ? 'positive' : 'negative'}">${file.ratio > 0 ? '-' : '+'}${Math.abs(file.ratio)}%</span>`
+                    : '';
+
+                const originalSizeDisplay = file.compressed_size !== null
+                    ? `<span class="size-original strikethrough">${formatSize(file.original_size)}</span>
+                       <span class="size-arrow">→</span>
+                       <span class="size-compressed">${formatSize(file.compressed_size)}</span>`
+                    : `<span class="size-compressed">${formatSize(file.original_size)}</span>`;
+
+                fileItem.innerHTML = `
+                    <div class="file-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                            <circle cx="8.5" cy="8.5" r="1.5"/>
+                            <polyline points="21 15 16 10 5 21"/>
+                        </svg>
+                    </div>
+                    <div class="file-info">
+                        <div class="file-name" title="${file.filename}">${file.filename}</div>
+                        <div class="file-meta">
+                            ${originalSizeDisplay}
+                            ${ratioDisplay}
+                        </div>
+                    </div>
+                    <div class="file-status ${statusClass}">${statusText}</div>
+                    <div class="file-actions">
+                        ${file.status === 'completed' ? `
+                            <button class="btn-icon" onclick="downloadFile('${fileId}')" title="下载">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    <polyline points="7 10 12 15 17 10"/>
+                                    <line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                            </button>
+                        ` : ''}
+                        <button class="btn-icon btn-remove" onclick="removeFile('${fileId}')" title="移除">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                <line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+                `;
+                fileList.appendChild(fileItem);
+            });
+
+            // Show/hide download section
+            if (completedCount > 0) {
+                downloadSection.style.display = 'block';
+                const overallRatio = totalOriginal > 0
+                    ? Math.round((1 - totalCompressed / totalOriginal) * 100)
+                    : 0;
+                stats.innerHTML = `
+                    <div class="stat-item">
+                        <span class="stat-label">文件数</span>
+                        <span class="stat-value">${completedCount}/${state.files.size}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">原大小</span>
+                        <span class="stat-value">${formatSize(totalOriginal)}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">压缩后</span>
+                        <span class="stat-value">${formatSize(totalCompressed)}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">节省</span>
+                        <span class="stat-value ${overallRatio > 0 ? 'positive' : ''}">${overallRatio}%</span>
+                    </div>
+                `;
+            } else {
+                downloadSection.style.display = 'none';
+            }
+        }
+
+        function updateCompressButton(loading) {
+            const btnText = compressBtn.querySelector('.btn-text');
+            const btnLoading = compressBtn.querySelector('.btn-loading');
+            btnText.style.display = loading ? 'none' : 'inline';
+            btnLoading.style.display = loading ? 'inline-flex' : 'none';
+            compressBtn.disabled = loading;
+        }
+    </script>
+</body>
+</html>
