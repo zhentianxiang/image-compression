@@ -84,7 +84,8 @@
         // State management
         const state = {
             files: new Map(),
-            compressing: false
+            compressing: false,
+            downloading: false
         };
 
         // DOM Elements
@@ -107,6 +108,12 @@
             const sizes = ['B', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        function escapeHtml(value) {
+            return String(value).replace(/[&<>"']/g, ch => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[ch]));
         }
 
         // Drag and drop handlers
@@ -212,6 +219,7 @@
                             file.status = 'completed';
                             file.compressed_size = result.compressed_size;
                             file.ratio = result.ratio;
+                            file.download_name = result.download_name;
                         }
                     });
                     updateUI();
@@ -225,33 +233,96 @@
             }
         });
 
-        // Download single file
-        function downloadFile(fileId) {
-            window.location.href = `/api/download/${fileId}`;
+        // Download single file (server keeps the uploaded file name)
+        async function downloadFile(fileId) {
+            if (state.downloading) return;
+            await downloadAndReset(`/api/download/${encodeURIComponent(fileId)}`);
         }
 
-        // Download all as ZIP
-        downloadAllBtn.addEventListener('click', () => {
-            window.location.href = '/api/download-all';
+        // Download all compressed files as ZIP
+        downloadAllBtn.addEventListener('click', async () => {
+            if (state.downloading || state.files.size === 0) return;
+            await downloadAndReset('/api/download-all');
         });
+
+        // Fetch the file first, save it with the name from the server, then reset
+        async function downloadAndReset(url) {
+            if (state.downloading) return;
+
+            state.downloading = true;
+            setButtonsDisabled(true);
+
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+                const blob = await response.blob();
+                const filename = filenameFromResponse(response, url);
+
+                saveBlob(blob, filename);
+                await clearEverything();
+            } catch (error) {
+                console.error('Download error:', error);
+                alert('下载失败，请重试');
+            } finally {
+                state.downloading = false;
+                setButtonsDisabled(false);
+            }
+        }
+
+        // Read the filename the server chose (keeps the uploaded file name)
+        function filenameFromResponse(response, url) {
+            const disposition = response.headers.get('Content-Disposition') || '';
+            const utf8 = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+            if (utf8) {
+                try { return decodeURIComponent(utf8[1]); } catch (e) { /* fall through */ }
+            }
+            const plain = disposition.match(/filename="?([^";]+)"?/i);
+            if (plain) return plain[1];
+            return url.split('/').pop() || 'download';
+        }
+
+        function saveBlob(blob, filename) {
+            const objectUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = objectUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 4000);
+        }
+
+        // Clear the list and the server state automatically after a download
+        async function clearEverything() {
+            state.files.clear();
+            updateUI();
+
+            try {
+                await fetch('/api/clear', { method: 'POST' });
+            } catch (error) {
+                console.error('Clear error:', error);
+            }
+        }
+
+        function setButtonsDisabled(disabled) {
+            downloadAllBtn.disabled = disabled;
+            clearAllBtn.disabled = disabled;
+        }
 
         // Clear all
         clearAllBtn.addEventListener('click', async () => {
             if (!confirm('确定要清空所有图片吗？')) return;
-
-            try {
-                await fetch('/api/clear', { method: 'POST' });
-                state.files.clear();
-                updateUI();
-            } catch (error) {
-                console.error('Clear error:', error);
-            }
+            await clearEverything();
         });
 
         // Remove single file
         function removeFile(fileId) {
             state.files.delete(fileId);
             updateUI();
+            // Keep the server in sync so it is not included in the ZIP.
+            fetch(`/api/remove/${encodeURIComponent(fileId)}`, { method: 'POST' })
+                .catch(error => console.error('Remove error:', error));
         }
 
         // Update UI
@@ -294,6 +365,12 @@
                        <span class="size-compressed">${formatSize(file.compressed_size)}</span>`
                     : `<span class="size-compressed">${formatSize(file.original_size)}</span>`;
 
+                // Show the name it will be saved as when the format changed
+                const safeFilename = escapeHtml(file.filename);
+                const downloadNameDisplay = file.download_name && file.download_name !== file.filename
+                    ? `<div class="file-download-name" title="下载文件名">下载为 ${escapeHtml(file.download_name)}</div>`
+                    : '';
+
                 fileItem.innerHTML = `
                     <div class="file-icon">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -303,7 +380,8 @@
                         </svg>
                     </div>
                     <div class="file-info">
-                        <div class="file-name" title="${file.filename}">${file.filename}</div>
+                        <div class="file-name" title="${safeFilename}">${safeFilename}</div>
+                        ${downloadNameDisplay}
                         <div class="file-meta">
                             ${originalSizeDisplay}
                             ${ratioDisplay}

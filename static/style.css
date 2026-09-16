@@ -313,6 +313,15 @@ input[type="range"]::-webkit-slider-thumb:hover {
     margin-bottom: 4px;
 }
 
+.file-download-name {
+    font-size: 0.75rem;
+    color: var(--primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 4px;
+}
+
 .file-meta {
     display: flex;
     align-items: center;

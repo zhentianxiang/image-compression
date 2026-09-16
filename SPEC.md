@@ -32,6 +32,9 @@
 - [ ] 打包为ZIP压缩包下载
 - [ ] 点击单个文件单独下载
 - [ ] 显示压缩比统计
+- [x] 下载文件名沿用上传的源文件名（扩展名跟随实际编码格式，如无透明通道的 PNG 会输出为 .jpg）
+- [x] 单个文件下载和 ZIP 批量下载名称一致，同名文件在 ZIP 内自动去重为 `name (2).jpg`
+- [x] 下载完成后自动清空文件列表并重置界面，无需手动清空
 
 ### 界面功能
 - [ ] 拖拽区域视觉反馈
@@ -82,16 +85,22 @@
 ### POST /compress
 - **功能**: 压缩指定文件
 - **请求**: JSON `{ "file_ids": ["id1", "id2"], "quality": 80 }`
-- **响应**: JSON `{ "success": true, "files": [{ "id": "xxx", "original_size": 1000, "compressed_size": 500 }] }`
+- **响应**: JSON `{ "success": true, "files": [{ "id": "xxx", "filename": "a.png", "download_name": "a.jpg", "original_size": 1000, "compressed_size": 500 }] }`
+- **说明**: `download_name` 为下载时使用的文件名（源文件名 + 实际输出格式的扩展名）
 
 ### GET /download/<file_id>
 - **功能**: 下载单个压缩文件
-- **响应**: 文件流
+- **响应**: 文件流（`Content-Disposition` 中的文件名与源文件名一致）
+- **错误**: 未压缩的文件返回 `400`
 
 ### GET /download-all
-- **功能**: 下载所有压缩文件ZIP包
-- **响应**: ZIP文件流
+- **功能**: 下载所有已压缩文件ZIP包（ZIP 内文件名与源文件名一致，同名自动加序号）
+- **响应**: ZIP文件流（无已压缩文件时返回 `400`）
 
 ### DELETE /clear
 - **功能**: 清理所有上传文件
+- **响应**: JSON `{ "success": true }`
+
+### POST /remove/<file_id>
+- **功能**: 移除单个上传文件
 - **响应**: JSON `{ "success": true }`

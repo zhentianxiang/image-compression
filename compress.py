@@ -18,8 +18,22 @@ def get_image_info(file_obj):
         return {}
 
 
+def output_extension(pil_format):
+    """Map a Pillow format name to a file extension (without the dot)."""
+    fmt = (pil_format or '').upper()
+    if fmt == 'JPEG':
+        return 'jpg'
+    if fmt in ('PNG', 'WEBP', 'BMP', 'GIF', 'TIFF'):
+        return fmt.lower()
+    return fmt.lower() or 'jpg'
+
+
 def compress_image(file_obj, quality=80, original_format=None):
-    """Compress an image and return compressed bytes."""
+    """Compress an image and return (compressed_bytes, output_format).
+
+    output_format is the Pillow format actually written, so callers can build a
+    filename/mimetype that matches the real content (PNG input may become JPEG).
+    """
     img = Image.open(file_obj)
 
     # Parse extension from original_format (remove dot if present)
@@ -32,7 +46,7 @@ def compress_image(file_obj, quality=80, original_format=None):
     if ext == 'PNG':
         if img.mode == 'RGBA':
             img.save(output_buffer, format='PNG', optimize=True)
-            return output_buffer.getvalue()
+            return output_buffer.getvalue(), 'PNG'
         else:
             # Convert to JPEG for better compression
             ext = 'JPEG'
@@ -57,4 +71,4 @@ def compress_image(file_obj, quality=80, original_format=None):
 
     img = img.convert('RGB')
     img.save(output_buffer, **save_kwargs)
-    return output_buffer.getvalue()
+    return output_buffer.getvalue(), save_kwargs['format']
